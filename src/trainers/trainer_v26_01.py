@@ -11,9 +11,8 @@ import numpy as np
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
 if project_root not in sys.path:
     sys.path.append(project_root)
-
 from src.database.connector import LocalShareClient
-from src.models.agent_model_v26.01 import DailyKronosTokenizer, DailyKronos
+from src.models.agent_model_v26_01 import DailyKronosTokenizer, DailyKronos
 
 
 class DailyStockDataset(Dataset):
@@ -77,7 +76,7 @@ class DailyStockDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, index):
         """
         获取单个训练样本。
         
@@ -85,7 +84,7 @@ class DailyStockDataset(Dataset):
             x (torch.Tensor): 形状为 [seq_len, 5] 的标准化特征序列。
             stamp (torch.Tensor): 形状为 [seq_len] 的相对时间序列 [0, 1, ..., seq_len-1]。
         """
-        x = torch.tensor(self.samples[idx], dtype=torch.float32)
+        x = torch.tensor(self.samples[index], dtype=torch.float32)
         # 时间序列仅为相对顺序
         stamp = torch.arange(self.seq_len, dtype=torch.long)
         return x, stamp

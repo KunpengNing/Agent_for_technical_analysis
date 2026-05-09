@@ -30,7 +30,7 @@ class LocalShareClient:
         # --- 前复权 (qfq) 逻辑 ---
         if adjust == "pre_adj":
             print("提示：不建议使用前复权数据进行策略研究，暂未实现此功能。")
-            return None
+            return pd.DataFrame()
 
         # --- 不复权 (nfq) 逻辑 ---
         elif adjust == 'no_adj':
@@ -64,10 +64,9 @@ class LocalShareClient:
             ORDER BY ts ASC;
             """
 
-        # 无效参数
         else:
             print(f"提示：无效的复权参数 '{adjust}', 请使用 'pre_adj', 'no_adj', 'back_adj'。")
-            return None
+            return pd.DataFrame()
 
         # 6. 统一执行查询
         with self.engine.connect() as conn:
@@ -80,9 +79,9 @@ class LocalShareClient:
         return df
 
     def get_stock_list(self,
-            available_from: str = None, 
-            available_until: str = None,
-            exchange: list = ['sh', 'sz'],
+            available_from: str | None = None, 
+            available_until: str | None = None,
+            exchange: list[str] = ['sh', 'sz'],
         ) -> list[str]:
         """
         获取数据库中去重且排序后的股票代码列表。

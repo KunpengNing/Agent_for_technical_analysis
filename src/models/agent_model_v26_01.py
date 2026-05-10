@@ -22,7 +22,7 @@ from src.utils.modules import (
 )
 
 
-class RelativeTemporalEmbedding(nn.Module):
+class TemporalEmbedding(nn.Module):
     """
     相对位置时间编码层。
     与原版的高频时间特征 (minute, hour, weekday等) 不同，
@@ -30,29 +30,17 @@ class RelativeTemporalEmbedding(nn.Module):
     
     Args:
         d_model (int): 模型的隐藏层维度。
-        max_len (int): 序列的最大长度，默认为 5000。
+        max_input_dim (int): 序列的最大长度，默认为 1024。
     """
-    def __init__(self, d_model, max_len=5000):
-        super(RelativeTemporalEmbedding, self).__init__()
-        self.pos_embed = FixedEmbedding(max_len, d_model)
+    def __init__(self, d_model, max_input_dim=1024):
+        super(TemporalEmbedding, self).__init__()
+        self.pos_embed = FixedEmbedding(max_input_dim, d_model)
 
     def forward(self, stamp):
-        """
-        前向传播函数。
-        
-        Args:
-            stamp (torch.Tensor): 形状为 [batch_size, seq_len] 的时间戳序列。
-                                  内容应为 [0, 1, 2, ...] 的相对位置索引。
-                                  
-        Returns:
-            torch.Tensor: 形状为 [batch_size, seq_len, d_model] 的时间编码。
-        """
-        # stamp 应该是 [0, 1, 2, ..., seq_len-1]
-        # 使用 FixedEmbedding 提取相对位置的表征
         return self.pos_embed(stamp.long())
 
 
-class DailyKronosTokenizer(nn.Module, PyTorchModelHubMixin):
+class Tokenizer(nn.Module, PyTorchModelHubMixin):
     """
     日线级别特征的分词器 (Tokenizer)。
     继承自原版的 KronosTokenizer 思路，但将默认输入维度改为 5 (开、高、低、收、成交额)。
@@ -172,7 +160,7 @@ class DailyKronosTokenizer(nn.Module, PyTorchModelHubMixin):
         return z
 
 
-class DailyKronos(nn.Module, PyTorchModelHubMixin):
+class Predictor(nn.Module, PyTorchModelHubMixin):
     """
     日线级别自回归预测模型的主体架构。
     接收由 Tokenizer 提取的离散 Tokens (s1_ids, s2_ids)，
@@ -195,7 +183,7 @@ class DailyKronos(nn.Module, PyTorchModelHubMixin):
         self.embedding = HierarchicalEmbedding(self.s1_bits, self.s2_bits, self.d_model)
         
         # 使用仅基于相对位置序列的 Daily 时间编码层
-        self.time_emb = RelativeTemporalEmbedding(self.d_model)
+        self.time_emb = TemporalEmbedding(self.d_model)
         
         # 自回归 Transformer Blocks
         self.transformer = nn.ModuleList([

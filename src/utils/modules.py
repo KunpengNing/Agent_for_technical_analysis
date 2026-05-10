@@ -520,20 +520,20 @@ class DualHead(nn.Module):
 
 
 class FixedEmbedding(nn.Module):
-    def __init__(self, c_in, d_model):
+    def __init__(self, input_capacity, d_model):
         super(FixedEmbedding, self).__init__()
 
-        w = torch.zeros(c_in, d_model).float()
+        w = torch.zeros(input_capacity, d_model).float()
         w.requires_grad = False
 
-        position = torch.arange(0, c_in).float().unsqueeze(1)
+        position = torch.arange(0, input_capacity).float().unsqueeze(1)
         div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
 
         w[:, 0::2] = torch.sin(position * div_term)
         w[:, 1::2] = torch.cos(position * div_term)
 
-        self.emb = nn.Embedding(c_in, d_model)
-        self.emb.weight = nn.Parameter(w, requires_grad=False)
+        self.embed = nn.Embedding(input_capacity, d_model)
+        self.embed.weight = nn.Parameter(w, requires_grad=False)
 
     def forward(self, x):
-        return self.emb(x).detach()
+        return self.embed(x).detach()

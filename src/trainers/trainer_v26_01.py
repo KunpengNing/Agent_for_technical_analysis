@@ -6,6 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import random
+from tqdm import tqdm
+from datetime import datetime, timedelta
 
 # 将项目根目录加入到系统路径中
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
@@ -19,37 +22,86 @@ class DailyStockDataset(Dataset):
     """
     日线级别股票数据集。
     """
-    def __init__(self, seq_len=256, max_stocks=None):
+    def __init__(self,
+        seq_len: int = 256,
+        num_samples: int = 1024,
+        start_date: str = "20150101",
+        end_date: str = "20250101",
+    ):
         self.seq_len = seq_len
-        self.client = LocalShareClient()
-        
-        print("正在从数据库获取可用股票列表...")
-        stock_list = self.client.get_stock_list()
-        if max_stocks is not None:
-            stock_list = stock_list[:max_stocks]
-            
-        print(f"计划加载 {len(stock_list)} 只股票的数据...")
-        
+        self.num_samples = num_samples
+        self.start_date = start_date
+        self.end_date = end_date
+        client = LocalShareClient()
+
+        print(f"[{self.__class__.__name__}] 正在从数据库获取可用股票列表")
+        raw_stock_list = client.get_stock_list()
+
+        # 1. 过滤股票 (Mod 7 排除测试集)
+        stocks_for_training = []
+        stocks_for_test = []
+        for s in raw_stock_list:
+            # 提取 symbol 中的数字部分 (如 'sh600001' -> 600001)
+            num_part = "".join(filter(str.isdigit, s))
+            if num_part and int(num_part) % 7 == 0:
+                stocks_for_test.append(s)
+            else:
+                stocks_for_training.append(s)
+
+        print(f"[{self.__class__.__name__}] 获取完成，用于训练的股票数量: {len(stocks_for_training)}, 用于测试的股票数量: {len(stocks_for_test)}")
+
+
+        # 2. 构建切片元数据池
         self.samples = []
-        for idx, symbol in enumerate(stock_list):
-            if idx % 100 == 0 and idx > 0:
-                print(f"已处理 {idx} 只股票...")
-                
-            df = self.client.get_daily_quote(symbol=symbol, adjust="no_adj")
-            if df is None or len(df) < self.seq_len:
-                continue
-            
-            features = df[['open', 'high', 'low', 'close', 'amount']].values.astype(np.float32)
-            features = np.nan_to_num(features)
-            
-            for i in range(len(features) - self.seq_len + 1):
-                window = features[i : i + self.seq_len]
-                mean = np.mean(window, axis=0)
-                std = np.std(window, axis=0) + 1e-8
-                window_norm = (window - mean) / std
-                self.samples.append(window_norm)
-                
-        print(f"数据集加载完毕，共生成 {len(self.samples)} 个有效训练切片。")
+        print(f"[{self.__class__.__name__}] 开始构建切片池，目标样本数量: {self.num_samples}")
+
+        date_format = "%Y%m%d"
+        start_datetime = datetime.strptime(self.start_date, date_format)
+        end_datetime = datetime.strptime(self.end_date, date_format)
+        delta_days = (end_datetime - start_datetime).days
+        
+        with tqdm(total=self.num_samples, desc="构建数据切片") as pbar:
+            while len(self.samples) < self.num_samples:
+                stock_symbol = random.choice(stocks_for_training)
+                random_days = random.randint(0, delta_days)
+                stock_start = start_datetime + timedelta(days=random_days)
+                # 预留1.8倍的日历天数，以确保有足够的交易日
+                stock_end = stock_start + timedelta(days=int(self.seq_len * 1.8))
+                stock_start_str = stock_start.strftime("%Y%m%d")
+                stock_end_str = stock_end.strftime("%Y%m%d")
+    
+                try:
+                    df = client.get_daily_quote(stock_symbol, start_date=stock_start_str, end_date=stock_end_str, adjust="back_adj")
+                    if df is None or df.empty or df.shape[0] < self.seq_len:
+                        continue
+                    
+                    df = df.iloc[:self.seq_len, :]
+                    features = df[['open', 'high', 'low', 'close', 'amount']].values.astype(np.float32)
+                    
+                    # 过滤包含无效值（如停牌导致的 0 价格/成交量，或者 NaN）的切片
+                    if np.isnan(features).any() or (features <= 0).any():
+                        continue
+                        
+                    # --- 数据归一化 (Instance Normalization) ---
+                    # 1. 价格通道归一化 (Open, High, Low, Close) - 共享均值和标准差以保持K线形态
+                    prices = features[:, :4]
+                    p_mean = prices.mean()
+                    p_std = prices.std() + 1e-8
+                    features[:, :4] = (prices - p_mean) / p_std
+                    
+                    # 2. 成交量归一化 (Amount) - 差异巨大，先取对数压缩极值，再做标准化
+                    amounts = np.log(features[:, 4])
+                    a_mean = amounts.mean()
+                    a_std = amounts.std() + 1e-8
+                    features[:, 4] = (amounts - a_mean) / a_std
+                    
+                    self.samples.append(features)
+                    pbar.update(1)
+    
+                except Exception as e:
+                    # 获取出错直接跳过
+                    continue
+
 
     def __len__(self):
         return len(self.samples)
@@ -62,13 +114,13 @@ class DailyStockDataset(Dataset):
 
 class BaseTrainer:
     """训练器基类，处理设备、数据加载和保存路径。"""
-    def __init__(self, seq_len=256, batch_size=32, max_stocks=100, device=None):
+    def __init__(self, seq_len=256, batch_size=32, num_samples=4096, device=None):
         self.seq_len = seq_len
         self.batch_size = batch_size
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # 数据加载
-        self.dataset = DailyStockDataset(seq_len=seq_len, max_stocks=max_stocks)
+        self.dataset = DailyStockDataset(seq_len=seq_len, num_samples=num_samples)
         self.dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
         
         # 路径设置

@@ -4,9 +4,5 @@ if __name__ == "__main__":
     # 示例用法
     
     # 1. 训练 Tokenizer
-    t_trainer = TokenizerTrainer(max_stocks=10)
-    t_trainer.train(epochs=2)
-    
-    # # 2. 训练 Predictor
-    # p_trainer = PredictorTrainer(max_stocks=10)
-    # p_trainer.train(epochs=2)
+    t_trainer = TokenizerTrainer(seq_len=256, batch_size=32, num_samples=1024)
+    t_trainer.train(epochs=30)
